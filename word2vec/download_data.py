@@ -1,4 +1,3 @@
-# -*- coding: utf8 -*-
 """
 到澎湃新闻那下些语料
 """
@@ -8,13 +7,14 @@ import codecs
 import time
 import requests
 from bs4 import BeautifulSoup
+import traceback
 
 THE_PAPER = "http://www.thepaper.cn/newsDetail_forward_%d"
 INVALID_TEXT = u"此文章已下线"
 
 
 def get_news_text(newsid):
-    print "requesting %s"%(THE_PAPER%newsid)
+    print("requesting %s"%(THE_PAPER%newsid))
     response = requests.get(THE_PAPER%newsid)
     html = response.text
     soup = BeautifulSoup(html)
@@ -51,4 +51,11 @@ def download(output, start=0, end=3000000, stop_at=100):
             log_task(str(start))
             start += 1
 
-download("news.txt")
+attempt = 0
+while attempt < 100:
+    try:
+        download("news.%d.txt"%attempt)
+    except:
+        traceback.print_exc()
+        pass
+    attempt += 1

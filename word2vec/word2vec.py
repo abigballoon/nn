@@ -19,6 +19,7 @@ import random
 logger.info("import module")
 import jieba
 import tensorflow as tf
+import numpy as np
 
 
 def getData():
@@ -67,71 +68,99 @@ class Word2Vec(object):
         self.vocab_counts = counts
 
         with codecs.open(self._train_fp, encoding="utf8") as f:
-            self.train_content = f.read().split('\n')
+            content = f.read()
+            self.train_segments = jieba.cut(content, cut_all=False)
+            self.train_content = content.split('\n')
 
     def _embed(self):
-        vocab_size = self.vocab_size
-        embedding_size = self.embedding_size
-        embeddings = tf.Variable(
-            tf.random_uniform([vocab_size, embedding_size], -1.0, 1.0)
-        )
-        self.embeddings = embeddings
+        with tf.name_scope("embedding"):
+            vocab_size = self.vocab_size
+            embedding_size = self.embedding_size
+            embeddings = tf.Variable(
+                tf.random_uniform([vocab_size, embedding_size], -1.0, 1.0)
+            )
+            self.embeddings = embeddings
 
     def _init_weights_and_bias(self):
         vocab_size = self.vocab_size
         embedding_size = self.embedding_size
-        self.nce_weights = tf.Variable(
-            tf.truncated_normal([vocab_size, embedding_size],
-                                stddev=1.0 / math.sqrt(embedding_size))
-        )
-        self.nce_bias = tf.Variable(tf.zeros([vocab_size]))
+        with tf.name_scope("weights"):
+            self.nce_weights = tf.Variable(
+                tf.truncated_normal([vocab_size, embedding_size],
+                                    stddev=1.0 / math.sqrt(embedding_size))
+            )
+        with tf.name_scope("biases"):
+            # self.nce_bias = tf.Variable(tf.zeros([vocab_size]))
+            self.nce_bias = tf.Variable(
+                tf.truncated_normal([vocab_size, ],
+                                    stddev=1.0 / math.sqrt(vocab_size))
+            )
 
     def _pre_train(self):
         num_sampled = 64
-        self._init_weights_and_bias()
-        self.train_inputs = tf.placeholder(tf.int32, shape=[self.batch_size])
-        self.train_labels = tf.placeholder(tf.int32, shape=[self.batch_size, 1])
-        self.embed = tf.nn.embedding_lookup(self.embeddings, self.train_inputs)
+        with tf.device('/cpu:0'):
+            self._init_weights_and_bias()
+            with tf.name_scope("inputs"):
+                self.train_inputs = tf.placeholder(tf.int32, shape=[self.batch_size])
+                self.train_labels = tf.placeholder(tf.int32, shape=[self.batch_size, 1])
+
+            with tf.name_scope("embed"):
+                self.embed = tf.nn.embedding_lookup(self.embeddings, self.train_inputs)
+
         self._sess = tf.Session()
-        self.loss = tf.reduce_mean(
-            tf.nn.nce_loss(weights=self.nce_weights,
-                        biases=self.nce_bias,
-                        labels=self.train_labels,
-                        inputs=self.embed,
-                        num_sampled=num_sampled,
-                        num_classes=self.vocab_size)
-        )
-        self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.eta).minimize(self.loss)
+        with tf.name_scope("loss"):
+            self.loss = tf.reduce_mean(
+                tf.nn.nce_loss(weights=self.nce_weights,
+                            biases=self.nce_bias,
+                            labels=self.train_labels,
+                            inputs=self.embed,
+                            num_sampled=num_sampled,
+                            num_classes=self.vocab_size)
+            )
+        with tf.name_scope("optimizer"):
+            self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.eta).minimize(self.loss)
 
     def get_center_words(self, c_index):
         pass
 
+    def get_next_pair(self, skip_window):
+
+        def generate_from(array):
+            center_index = int((len(array) + 1) / 2)
+            center = array[center_index]
+            for item in array[: center_index] + array[center_index+1: ]:
+                yield center, item
+
+        stop = False
+        window = []
+        while not stop:
+            try:
+                window.append(self.train_segments.__next__())
+            except StopIteration:
+                stop = True
+
+            if len(window) != skip_window * 2 + 1:
+                continue
+            
+            for _input, label in generate_from(window):
+                yield _input, label
+            window = window[1:]
 
     def generate_batch(self, batch_size, skip_window):
-        for index in range(0, len(self.train_content), batch_size):
-            logger.info("generating %dth batch"%index)
-            inputs, labels = [], []
-            segments = []
-            for line in self.train_content[index: index + batch_size]:
-                segments.extend(jieba.cut(line, cut_all=False))
-
-            for sindex in range(len(segments)):
-                center = segments[sindex]
-                center_id = self.dict.get(center, 0)
-                left = segments[index - 1 - skip_window: index - 1]
-                right = segments[index + 1: index + 1 + skip_window]
-
-                for context in left + right:
-                    context_id = self.dict.get(context, 0)
-                    inputs.append(center_id)
-                    labels.append((context_id, ))
-            yield inputs, labels
+        inputs, labels = [], []
+        for _input, label in self.get_next_pair(skip_window):
+            inputs.append(self.dict[_input])
+            labels.append(self.dict[label])
+            if len(inputs) == batch_size:
+                yield inputs, labels
 
 
     def train(self, num_sampled=64, learning_rate=1.0):
         random.shuffle(self.train_content)
         self._pre_train()
         for inputs, labels in self.generate_batch(self.batch_size, self.window_size):
+            inputs = np.array(inputs).reshape((len(inputs), ))
+            labels = np.array(labels).reshape((len(labels), 1))
             feed = {self.train_inputs: inputs, self.train_labels: labels}
             _, summary, loss_val = self._sess.run([self.optimizer, self.loss], feed)
 

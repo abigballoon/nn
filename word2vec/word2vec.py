@@ -90,11 +90,12 @@ class Word2Vec(object):
                                     stddev=1.0 / math.sqrt(embedding_size))
             )
         with tf.name_scope("biases"):
-            # self.nce_bias = tf.Variable(tf.zeros([vocab_size]))
-            self.nce_bias = tf.Variable(
-                tf.truncated_normal([vocab_size, ],
-                                    stddev=1.0 / math.sqrt(vocab_size))
-            )
+            self.nce_bias = tf.Variable(tf.zeros([vocab_size]))
+            # self.nce_bias = tf.Variable(
+            #     tf.truncated_normal([vocab_size, ],
+            #                         stddev=1.0 / math.sqrt(vocab_size))
+            # )
+            pass
 
     def _pre_train(self):
         num_sampled = 64
@@ -149,8 +150,8 @@ class Word2Vec(object):
     def generate_batch(self, batch_size, skip_window):
         inputs, labels = [], []
         for _input, label in self.get_next_pair(skip_window):
-            inputs.append(self.dict[_input])
-            labels.append(self.dict[label])
+            inputs.append(self.dict.get(_input, 0))
+            labels.append(self.dict.get(label, 0))
             if len(inputs) == batch_size:
                 yield inputs, labels
 
@@ -158,11 +159,14 @@ class Word2Vec(object):
     def train(self, num_sampled=64, learning_rate=1.0):
         random.shuffle(self.train_content)
         self._pre_train()
+        init = tf.global_variables_initializer()
+        init.run(session=self._sess)
         for inputs, labels in self.generate_batch(self.batch_size, self.window_size):
             inputs = np.array(inputs).reshape((len(inputs), ))
             labels = np.array(labels).reshape((len(labels), 1))
             feed = {self.train_inputs: inputs, self.train_labels: labels}
-            _, summary, loss_val = self._sess.run([self.optimizer, self.loss], feed)
+            session_result = self._sess.run([self.optimizer, self.loss], feed)
+            logger.info(session_result)
 
 app = Word2Vec("vocab.dev", "news.dev.txt")
 app.train()

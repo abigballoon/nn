@@ -20,6 +20,8 @@ logger.info("import module")
 import jieba
 import tensorflow as tf
 import numpy as np
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
 
 
 def getData():
@@ -36,6 +38,7 @@ class Word2Vec(object):
         self.vocab_size = vocab_size
         self.eta = eta
         self.window_size = window_size
+        self._final_embeddings = None
         self._load()
         self._embed()
 
@@ -47,6 +50,7 @@ class Word2Vec(object):
 
         counts = [["UNK", -1]]
         counts.extend(collections.Counter(self.vocab_all).most_common(self.vocab_size - 1))
+        logger.info("counts len: %d"%len(counts))
 
         dictionary = dict()
         for word, _ in counts:
@@ -63,6 +67,7 @@ class Word2Vec(object):
         counts[0][1] = unk_count
         reversed_dictionary = dict(zip(dictionary.values(), dictionary.keys()))
         logger.info("mapping complete")
+        logger.info("dictionary size: %d"%len(dictionary))
         self.dict = dictionary
         self.rdict = reversed_dictionary
         self.vocab_counts = counts
@@ -154,19 +159,90 @@ class Word2Vec(object):
             labels.append(self.dict.get(label, 0))
             if len(inputs) == batch_size:
                 yield inputs, labels
+                inputs, labels = [], []
 
+    def gen_segments(self, content):
+        return jieba.cut('\n'.join(content), cut_all=False)
 
-    def train(self, num_sampled=64, learning_rate=1.0):
+    def _gen_segments(self):
+        self.train_segments = self.gen_segments(self.train_content)
+
+    def train_one_epoch(self, num_sampled=64, learning_rate=1.0):
         random.shuffle(self.train_content)
-        self._pre_train()
-        init = tf.global_variables_initializer()
-        init.run(session=self._sess)
+        self._gen_segments()
+        overall_loss = 0
+        count = 0
         for inputs, labels in self.generate_batch(self.batch_size, self.window_size):
             inputs = np.array(inputs).reshape((len(inputs), ))
             labels = np.array(labels).reshape((len(labels), 1))
             feed = {self.train_inputs: inputs, self.train_labels: labels}
-            session_result = self._sess.run([self.optimizer, self.loss], feed)
-            logger.info(session_result)
+            _, loss = self._sess.run([self.optimizer, self.loss], feed)
+            overall_loss += loss
+            count += 1
+        logger.info("epoch average loss: %s"%str(overall_loss / float(count)))
 
-app = Word2Vec("vocab.dev", "news.dev.txt")
-app.train()
+    def train(self, epoch):
+        self._pre_train()
+        init = tf.global_variables_initializer()
+        init.run(session=self._sess)
+        for i in range(epoch):
+            logger.info("%d epoch started"%i)
+            self.train_one_epoch()
+        logger.info("train finished")
+
+    @property
+    def final_embeddings(self):
+        if self._final_embeddings is None:
+            norm = tf.sqrt(tf.reduce_sum(tf.square(self.embeddings), 1, keepdims=True))
+            normalized_embeddings = self.embeddings / norm
+            self._final_embeddings = normalized_embeddings.eval(session=self._sess)
+        return self._final_embeddings
+
+    def plot(self, plot_size=500):
+        def plot_with_labels(low_dim_embs, labels, filename):
+            plt.rcParams['font.sans-serif'] = ['SimHei', ]
+            plt.rcParams['axes.unicode_minus'] = False
+            plt.figure(figsize=(20, 20))
+            for i, label in enumerate(labels):
+                x, y = low_dim_embs[i, :]
+                plt.scatter(x, y)
+                plt.annotate(
+                    label,
+                    xy=(x, y),
+                    xytext=(5, 2),
+                    textcoords="offset points",
+                    ha="right",
+                    va="bottom"
+                )
+            plt.savefig(filename)
+
+        labels = [self.rdict[i] for i in range(plot_size)]
+        tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=5000, method="exact")
+        low_dim_embs = tsne.fit_transform(self.final_embeddings[:plot_size, :])
+        plot_with_labels(low_dim_embs, labels, "tsne.png")
+    
+    def distance(self, w1, w2):
+        id1 = self.dict.get(w1, 0)
+        id2 = self.dict.get(w2, 0)
+        v1 = self.final_embeddings[id1]
+        v2 = self.final_embeddings[id2]
+
+        _sum = 0
+        for f1, f2 in zip(v1, v2):
+            _sum += (f1 - f2) ** 2
+        return _sum ** 0.5
+    
+    def closest(self, target, count=10):
+        result = []
+        for _id, word in self.rdict.items():
+            if word == target:
+                continue
+            result.append((_id, self.distance(target, word)))
+        result.sort(key=lambda x: x[1])
+        result = [self.rdict[item[0]] for item in result[: count]]
+        return result
+
+app = Word2Vec("vocab.dev", "news.dev.txt", window_size=2)
+app.train(25)
+# print(app.closest(u"中国"))
+app.plot()

@@ -18,10 +18,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import sys
+import os
+base = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, base)
+
 import collections
 import math
-import os
-import sys
 import argparse
 import random
 from tempfile import gettempdir
@@ -58,6 +61,8 @@ url = 'http://mattmahoney.net/dc/'
 def maybe_download(filename, expected_bytes):
   """Download a file if not present, and make sure it's the right size."""
   local_filename = os.path.join(gettempdir(), filename)
+  local_filename = os.path.join(base, filename)
+  print(local_filename)
   if not os.path.exists(local_filename):
     local_filename, _ = urllib.request.urlretrieve(url + filename,
                                                    local_filename)
@@ -346,7 +351,7 @@ try:
   plot_only = 500
   low_dim_embs = tsne.fit_transform(final_embeddings[:plot_only, :])
   labels = [reverse_dictionary[i] for i in xrange(plot_only)]
-  plot_with_labels(low_dim_embs, labels, os.path.join(gettempdir(), 'tsne.png'))
+  plot_with_labels(low_dim_embs, labels, os.path.join(gettempdir(), 'tsne_example.png'))
 
 except ImportError as ex:
   print('Please install sklearn, matplotlib, and scipy to show embeddings.')

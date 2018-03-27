@@ -10,6 +10,7 @@ network是按照[一本出色的基础入门书](http://neuralnetworksanddeeplea
 #### RNN
 * 一个[web blog](http://www.wildml.com/2015/09/recurrent-neural-networks-tutorial-part-1-introduction-to-rnns/)
 * LSTM，还是[web blog](https://colah.github.io/posts/2015-08-Understanding-LSTMs/)
+* yolo，[object dection system](https://pjreddie.com/darknet/yolo/)
 
 #### 遗传神经网络
 

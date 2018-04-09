@@ -2,6 +2,8 @@
 
 network是按照[一本出色的基础入门书](http://neuralnetworksanddeeplearning.com/chap1.html)第一章的介绍，用numpy实现一个很简单的前馈神经网络。
 
+word2vec是参照tensorflow的教程，自己边学边写了一份
+
 ## TODO
 ### 基础知识
 #### CNN

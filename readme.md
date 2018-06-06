@@ -23,3 +23,6 @@ word2vec是参照tensorflow的教程，自己边学边写了一份
 
 #### cv
 * [standford cs231n](https://www.youtube.com/watch?v=vT1JzLTH4G4&list=PL3FW7Lu3i5JvHM8ljYj-zLfQRF3EO8sYv)
+
+#### Basic Functions
+* [softmax and its derivative](https://www.jianshu.com/p/ffa51250ba2e)

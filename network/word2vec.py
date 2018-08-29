@@ -4,9 +4,9 @@ import matplotlib.pyplot as plt
 import pickle
 import random
 
-torch.set_default_dtype(torch.float)
+torch.set_default_dtype(torch.float64)
 
-with open('vocab.dev', 'rb') as f:
+with open('shakespeare.dev', 'rb') as f:
     corpus = pickle.load(f)
 
 vocabd = {}
@@ -26,7 +26,8 @@ class Word2Vec(object):
         self.vocab = vocab
         self.vocab_dim = len(self.vocab)
         self.embed_dim = embed_dim
-        self.bed = torch.randn(self.embed_dim, self.vocab_dim, requires_grad=True)
+        self.ibed = torch.randn(self.embed_dim, self.vocab_dim, requires_grad=True)
+        self.obed = torch.randn(self.embed_dim, self.vocab_dim, requires_grad=True)
 
     def find(self, word):
         try:
@@ -35,54 +36,61 @@ class Word2Vec(object):
             idx = len(self.vocab) - 1
         return idx
 
-    def select(self, idx):
+    def select(self, idx, word_type='i'):
         _filter = torch.zeros(self.vocab_dim, 1)
         _filter[idx][0] = 1
-        return self.bed.mm(_filter)
+        if word_type == 'i':
+            return self.ibed.mm(_filter)
+        else:
+            return self.ibed.mm(_filter)
 
-    def lookup(self, word):
+    def lookup(self, word, word_type):
         idx = self.find(word)
-        return self.select(idx)
+        return self.select(idx, word_type)
 
     def _forward(self, corpus, window=2, neg_size=5):
         for idx, word in enumerate(corpus):
-            print(word)
+            if not idx % 1000:
+                print("%f%%"%(idx / len(corpus) * 100))
             targets_start = idx - window
             if targets_start < 0:
                 targets_start = 0
             targets = corpus[targets_start: idx] + corpus[idx + 1: idx + 1 + window]
-            context_embeded = self.lookup(word)
+            context_embeded = self.lookup(word, 'i')
             context_idx = self.find(word)
             loss_sum = torch.zeros(1, )
+            switch = False
+
             for target in targets:
-                target_embeded = self.lookup(target)
+                target_embeded = self.lookup(target, 'o')
                 loss = torch.log(torch.sigmoid(target_embeded.t().mm(context_embeded)))
                 for _ in range(neg_size):
                     neg_embeded = self.negative(context_idx)
                     loss += torch.log(torch.sigmoid(-neg_embeded.t().mm(context_embeded)))
-                if not torch.isnan(loss.sum()):
-                    loss_sum += loss.sum()
-            self.backward(loss_sum.sum(), len(targets))
+                if not torch.isnan(loss.sum()) and not torch.isinf(loss.sum()):
+                    loss_sum -= loss.sum()
+                    switch = True
+            if switch:
+                self.backward(loss_sum.sum(), len(targets))
 
     def forward(self, corpus, epochs, window=2, neg_size=5):
         for _ in range(epochs):
             self._forward(corpus, window=window, neg_size=neg_size)
 
     def backward(self, loss, batch_size):
-        try:
-            loss.backward()
-        except RuntimeError:
-            self.bed.grad.zero_()
-            return
+        loss.backward()
+        print(loss.sum())
         with torch.no_grad():
-            self.bed -= self.eta * self.bed.grad / batch_size
-            self.bed.grad.zero_()
+            self.ibed -= self.eta * self.ibed.grad / batch_size
+            self.ibed.grad.zero_()
+            # self.obed -= self.eta * self.obed.grad / batch_size
+            # self.obed.grad.zero_()
 
     def negative(self, idx):
         neg_idx = idx
         while neg_idx == idx:
             neg_idx = random.randint(0, self.vocab_dim - 1)
-        return self.select(neg_idx)
+        return self.select(neg_idx, 'o')
 
 
     def plot(self, plot_size=500):
@@ -104,11 +112,11 @@ class Word2Vec(object):
             plt.savefig(filename)
 
         labels = [self.vocab[i] for i in range(plot_size)]
-        tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=250, method="exact")
-        low_dim_embs = tsne.fit_transform(self.bed.detach().t()[:plot_size, :])
+        tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=5000, method="exact")
+        low_dim_embs = tsne.fit_transform(self.ibed.detach().t()[:plot_size, :])
         plot_with_labels(low_dim_embs, labels, "tsne.png")
 
-model = Word2Vec(vocab, 100, eta=0.01)
+model = Word2Vec(vocab, 300, eta=0.5)
 
 model.forward(corpus, 1)
 print("training done")

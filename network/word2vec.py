@@ -25,14 +25,18 @@ vocab = [item[0] for item in vocab[: 4999]]
 vocab.append("<UNK>")
 
 class Word2Vec(object):
-    def __init__(self, vocab, embed_dim, eta=None):
+    def __init__(self, vocab, freq, embed_dim, eta=None):
         self.eta = eta or 1.0
         self.vocab = vocab
         self.dict = {word: idx for idx, word in enumerate(vocab)}
+        self.freq = freq
+        self.max_freq = max(freq.values())
         self.vocab_dim = len(self.vocab)
         self.embed_dim = embed_dim
         self.ibed = torch.randn(self.embed_dim, self.vocab_dim, requires_grad=True)
+        self.ibed_t = self.ibed.t()
         self.obed = torch.randn(self.embed_dim, self.vocab_dim, requires_grad=True)
+
 
     def find(self, words):
         ids = []
@@ -44,77 +48,61 @@ class Word2Vec(object):
         return ids
 
     def select(self, ids, word_type='i'):
-        return self.ibed.t()[ids]
+        return self.ibed_t[ids]
 
 
     def lookup(self, words):
         ids = self.find(words)
         return self.select(ids)
 
-    def _forward(self, batch_size, corpus, window=2, neg_size=5):
-        starttime = time.time()
+    def gen(self, corpus, window=2, batch_size=5):
         L = len(corpus)
-        for start in range(0, L, batch_size):
-            end = start + batch_size
-            if end > L:
-                end = L
-            targets = []
-            contexts1 = []
-            contexts2 = []
-            for idx in range(start, end):
-                if not idx % 1000:
-                    current = time.time()
-                    print("%f%%"%(idx / len(corpus) * 100))
-                    print("estimated:", (current - starttime) * (len(corpus) - idx) / 1000.0 / 60.0 / 60.0)
-                    starttime = time.time()
-
-                targets_start = idx - window
-                if targets_start < 0:
-                    targets_start = 0
-                _targets = corpus[targets_start: idx] + corpus[idx + 1: idx + 1 + window]
-                targets += _targets
-                contexts1 += [idx for _ in _targets]
-                contexts2 += [idx for _ in range(neg_size * len(_targets))]
-            target_embededs = self.lookup(targets)
-            context_embededs = self.lookup(contexts1)
-            loss = torch.log(torch.sigmoid(target_embededs * context_embededs)).sum()
-            neg_embededs = self.negative(len(contexts2))
-            context_embededs = self.lookup(contexts2)
-            loss += torch.log(torch.sigmoid(-neg_embededs * context_embededs)).sum()
-
-            if not torch.isnan(loss.sum()) and not torch.isinf(loss.sum()):
-                loss_sum = -loss.sum()
-                self.backward(loss_sum.sum(), len(targets))
-
-        """
-        for idx, word in enumerate(corpus):
-            if not idx % 1000:
-                current = time.time()
-                print("%f%%"%(idx / len(corpus) * 100))
-                print("estimated:", (current - start) * (len(corpus) - idx) / 1000.0 / 60.0 / 60.0)
-                start = time.time()
-            if random.random() > 0.3:
-                continue
+        result = []
+        for idx in range(0, L):
+            context_word = corpus[idx]
             targets_start = idx - window
             if targets_start < 0:
                 targets_start = 0
-            targets = corpus[targets_start: idx] + corpus[idx + 1: idx + 1 + window]
-            context_embededs = self.lookup([idx for _ in targets], 'i')
-            loss_sum = torch.zeros(1, )
-            switch = False
+            _targets = corpus[targets_start: idx] + corpus[idx + 1: idx + 1 + window]
 
-            target_embededs = self.lookup(targets, 'o')
-            loss = torch.log(torch.sigmoid(target_embededs * context_embededs)).sum()
+            freq = float(self.freq.get(context_word, self.freq.get('<UNK>')))
+            repeat = min(int(round(self.max_freq / freq)), 10)
+            for _ in range(repeat):
+                context_words = [context_word for _ in _targets]
+                result.append([context_words, _targets, ])
+                if len(result) == batch_size:
+                    yield result
+                    result = []
 
-            neg_embededs = self.negative(neg_size)
-            context_embededs = self.lookup([idx for _ in range(neg_size)], 'i')
-            loss += torch.log(torch.sigmoid(-neg_embededs * context_embededs)).sum()
-            if not torch.isnan(loss.sum()) and not torch.isinf(loss.sum()):
-                loss_sum -= loss.sum()
-                switch = True
-            if switch:
-                self.backward(loss_sum.sum(), len(targets))
-        """
+
+    def _forward(self, batch_size, corpus, window=2, neg_size=5):
+        starttime = time.time()
+        L = len(corpus)
+        idx = 0
+        for batch in self.gen(corpus, window, batch_size):
+            if not idx % 1000:
+                current = time.time()
+                print("%f%%"%(idx / len(corpus) * 100))
+                print("estimated:", (current - starttime) * (len(corpus) - idx) / 1000.0 / 60.0 / 60.0)
+                starttime = time.time()
+            idx += 1
+
+            targets = []
+            contexts1 = []
+            contexts2 = []
+            for context, target in batch:
+                contexts1.extend(context)
+                targets.extend(target)
+                contexts2.extend(context * neg_size)
+            target_embededs = self.lookup(targets)
+            context_embededs = self.lookup(contexts1 + contexts2)
+            neg_embededs = -self.negative(len(contexts2))
+
+            a = torch.cat([target_embededs, neg_embededs], 0)
+            loss = torch.log(torch.sigmoid(a * context_embededs))
+            loss_sum = -loss.sum()
+            if not torch.isnan(loss_sum) and not torch.isinf(loss_sum):
+                self.backward(loss_sum, len(targets))
 
     def forward(self, batch_size, corpus, epochs, window=2, neg_size=5):
         for _ in range(epochs):
@@ -123,7 +111,7 @@ class Word2Vec(object):
     def backward(self, loss, batch_size):
         loss.backward()
         with torch.no_grad():
-            self.ibed -= self.eta * self.ibed.grad / batch_size
+            self.ibed -= (self.eta / batch_size) * self.ibed.grad
             self.ibed.grad.zero_()
             # self.obed -= self.eta * self.obed.grad / batch_size
             # self.obed.grad.zero_()
@@ -163,10 +151,10 @@ class Word2Vec(object):
         low_dim_embs = tsne.fit_transform(self.ibed.detach().t()[:plot_size, :])
         plot_with_labels(low_dim_embs, labels, "tsne.png")
 
-model = Word2Vec(vocab, 300, eta=0.5)
+model = Word2Vec(vocab, vocabd, 300, eta=0.5)
 
-# model.forward(20, corpus, 3, neg_size=5)
+model.forward(10, corpus, 3, neg_size=5)
 print("training done")
-# model.store()
-model.load()
+model.store()
+# model.load()
 model.plot(700)

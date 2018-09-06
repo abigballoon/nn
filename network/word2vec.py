@@ -5,24 +5,56 @@ import pickle
 import random
 import time
 import json
+import codecs
 
 torch.set_default_dtype(torch.float64)
 
-# with open('shakespeare.dev', 'rb') as f:
-with open('shakespeare.dev', 'rb') as f:
-    corpus = pickle.load(f)
+def sample_from_corpus(vocab, corpus, window):
+    rdict = {word: idx for idx, word in enumerate(vocab)}
+    def find(word):
+        try:
+            return rdict[word]
+        except KeyError:
+            return -1
 
+    def gen():
+        for idx, word in enumerate(corpus):
+            targets_start = idx - window
+            if targets_start < 0:
+                targets_start = 0
+            _targets = corpus[targets_start: idx] + corpus[idx + 1: idx + 1 + window]
+            for target in _targets:
+                yield find(word), find(target), word, target
+
+    array = list(gen())
+    random.shuffle(array)
+    return array
+
+
+def strip(s):
+    items = ',.\'!?(); '
+    for c in items:
+        s = s.replace(c, '')
+    return s.lower()
+
+with codecs.open('shakespear.dev.txt', 'r', encoding='utf8') as f:
+    corpus = f.read()
+    corpus = corpus.replace('\n', ' <CR> ')
+    corpus = [strip(item) for item in corpus.split(' ') if strip(item)]
+print('corpus:', len(corpus))
 vocabd = {}
 for word in corpus:
     if word not in vocabd:
         vocabd[word] = 0
     vocabd[word] += 1
-print(len(corpus))
 vocab = list(vocabd.items())
 vocab.sort(key=lambda x: x[1], reverse=True)
+print(vocab[: 10])
+vocab = [item[0] for item in vocab[: 49999]]
+print('vocab:', len(vocab))
 
-vocab = [item[0] for item in vocab[: 4999]]
-vocab.append("<UNK>")
+sample = sample_from_corpus(vocab, corpus, 2)
+print(sample[:10])
 
 class Word2Vec(object):
     def __init__(self, vocab, freq, embed_dim, eta=None):
@@ -35,7 +67,6 @@ class Word2Vec(object):
         self.embed_dim = embed_dim
         self.ibed = torch.randn(self.embed_dim, self.vocab_dim, requires_grad=True)
         self.ibed_t = self.ibed.t()
-        self.obed = torch.randn(self.embed_dim, self.vocab_dim, requires_grad=True)
 
 
     def find(self, words):
@@ -58,7 +89,11 @@ class Word2Vec(object):
     def gen(self, corpus, window=2, batch_size=5):
         L = len(corpus)
         result = []
-        for idx in range(0, L):
+        ids = list(range(0, L))
+        random.shuffle(ids)
+        count = 0
+        for idx in ids:
+            count += 1
             context_word = corpus[idx]
             targets_start = idx - window
             if targets_start < 0:
@@ -66,26 +101,30 @@ class Word2Vec(object):
             _targets = corpus[targets_start: idx] + corpus[idx + 1: idx + 1 + window]
 
             freq = float(self.freq.get(context_word, self.freq.get('<UNK>')))
-            repeat = min(int(round(self.max_freq / freq)), 10)
+            repeat = min(int(round(self.max_freq / freq)), 1)
             for _ in range(repeat):
                 context_words = [context_word for _ in _targets]
                 result.append([context_words, _targets, ])
                 if len(result) == batch_size:
-                    yield result
+                    random.shuffle(result)
+                    yield count, result
                     result = []
 
 
     def _forward(self, batch_size, corpus, window=2, neg_size=5):
         starttime = time.time()
         L = len(corpus)
-        idx = 0
-        for batch in self.gen(corpus, window, batch_size):
-            if not idx % 1000:
+        prev = 0
+        total_loss = 0
+        for idx, batch in self.gen(corpus, window, batch_size):
+            if idx - prev > 1000:
                 current = time.time()
                 print("%f%%"%(idx / len(corpus) * 100))
-                print("estimated:", (current - starttime) * (len(corpus) - idx) / 1000.0 / 60.0 / 60.0)
+                print("estimated:", (current - starttime) * (len(corpus) - idx) / float(idx - prev) / 60.0 / 60.0)
+                print("average loss:", total_loss / float(idx - prev))
                 starttime = time.time()
-            idx += 1
+                prev = idx
+                total_loss = 0
 
             targets = []
             contexts1 = []
@@ -101,6 +140,7 @@ class Word2Vec(object):
             a = torch.cat([target_embededs, neg_embededs], 0)
             loss = torch.log(torch.sigmoid(a * context_embededs))
             loss_sum = -loss.sum()
+            total_loss += loss_sum.item() / float(len(context_embededs))
             if not torch.isnan(loss_sum) and not torch.isinf(loss_sum):
                 self.backward(loss_sum, len(targets))
 
@@ -113,11 +153,9 @@ class Word2Vec(object):
         with torch.no_grad():
             self.ibed -= (self.eta / batch_size) * self.ibed.grad
             self.ibed.grad.zero_()
-            # self.obed -= self.eta * self.obed.grad / batch_size
-            # self.obed.grad.zero_()
 
     def negative(self, count=5):
-        return torch.randn(count, self.embed_dim)
+        return self.select([random.randint(0, self.vocab_dim - 1) for _ in range(count)])
 
 
     def store(self):
@@ -147,14 +185,14 @@ class Word2Vec(object):
             plt.savefig(filename)
 
         labels = [self.vocab[i] for i in range(plot_size)]
-        tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=7000, method="exact")
+        tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=5000, method="exact")
         low_dim_embs = tsne.fit_transform(self.ibed.detach().t()[:plot_size, :])
         plot_with_labels(low_dim_embs, labels, "tsne.png")
 
-model = Word2Vec(vocab, vocabd, 300, eta=0.5)
+model = Word2Vec(vocab, vocabd, 50, eta=0.1)
 
-model.forward(10, corpus, 3, neg_size=5)
+model.forward(10, corpus, 1, neg_size=10)
 print("training done")
 model.store()
 # model.load()
-model.plot(700)
+model.plot(300)

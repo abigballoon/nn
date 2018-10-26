@@ -17,8 +17,8 @@ class NCE(torch.nn.Module):
         super(NCE, self).__init__()
         self.vocab_size = len(vocab)
         self.embed_dim = embed_dim
-        self.embed = torch.nn.Parameter(torch.randn(self.embed_dim, self.vocab_size, requires_grad=True))
-        self.bias = torch.nn.Parameter(torch.randn(self.vocab_size, 1, requires_grad=True))
+        self.embed = torch.nn.Parameter(torch.randn(self.embed_dim, self.vocab_size).uniform_(-1, 1))
+        self.bias = torch.nn.Parameter(torch.randn(self.vocab_size, 1).uniform_(-1, 1))
 
         self.vocab = [item[0] for item in vocab]
         self.rvocab = {item: index for index, item in enumerate(self.vocab)}
@@ -37,10 +37,13 @@ class NCE(torch.nn.Module):
         return self.rvocab.get(word, self.rvocab.get(self.UNK))
 
     def indexfy(self, words):
+        """
+        return (V, x), x = batch_size
+        """
         _map = torch.tensor([[idx, self.find(word), ] for idx, word in enumerate(words)])
         return torch.sparse.FloatTensor(_map.t(), torch.ones(len(words)), torch.Size([len(words), self.vocab_size])).to_dense().t()
 
-    def forward(self, targets, contexts, noise_count=None):
+    def forward(self, targets, contexts, batch_size, noise_count):
         """
         target (V, x), one-hots, x = batch_size
         context (V, x), one-hots, x = batch_size
@@ -57,23 +60,24 @@ class NCE(torch.nn.Module):
         b = torch.mm(self.bias.t(), targets)
 
         # score
-        s = (r * q).sum(0) + b
+        s = ((r * q).sum(0) + b) / self.embed_dim
+
+        # distribution of words
+        # p = self.p(targets + )
+
         loss = (s - torch.log(noise_count * self.p(targets))).sigmoid().log().sum()
 
-        noises = self.get_noises(noise_count)
-        noise_loss = torch.zeros(1, 1)
-        for noise in noises:
-            _tmp = (1 - (s - torch.log(noise_count * self.p(noise))).sigmoid()).log().sum()
-            if not torch.isinf(_tmp):
-                noise_loss += _tmp
-        return -(loss + noise_loss)
+        noises = self.get_noises(batch_size * noise_count)
+        noise_loss = (1 - (torch.cat((s, ) * noise_count, dim=1) - torch.log(noise_count * self.p(noises))).sigmoid()).log().sum()
+
+        return -(loss + noise_loss) / batch_size + 0.1 * self.embed.pow(2).sum() / (self.embed_dim * self.vocab_size)
 
     def get_targets_n_contexts(self, target_words, context_words):
         return self.indexfy(target_words), self.indexfy(context_words)
 
     def get_noises(self, count):
-        choice = np.random.choice([_ for _ in range(self.vocab_size)], count, p=self.freq)
-        return self.select(choice)
+        choice = np.random.choice(self.vocab, count, p=self.freq)
+        return self.indexfy(choice)
 
     def store(self):
         data = self.embed.detach()
@@ -112,8 +116,8 @@ class NCE(torch.nn.Module):
 
 
 def getData():
-    with codecs.open("en.dev.txt", encoding="utf8") as f:
-        content = f.read().replace('\n', '')
+    with codecs.open("shakespear.dev.txt", encoding="utf8") as f:
+        content = f.read().replace('\n', '').lower()
     return content.split(' ')
 
 def getVocab(corpus):
@@ -144,7 +148,7 @@ def getPair(corpus, window, batch_size):
         if not process % 5000:
             print(process / L)
         start = max(0, index - window)
-        end = min(L, index + window)
+        end = min(L, index + window + 1)
         for _context in corpus[start: index] + corpus[index + 1: end]:
             target.append(word)
             context.append(_context)
@@ -152,30 +156,30 @@ def getPair(corpus, window, batch_size):
                 yield target, context
                 target = []
                 context = []
+    yield target, context
 
 if __name__ == '__main__':
     unk = '<UNK>'
     batch_size = 20
     neg_size = 5
+    embed_dim = 300
 
     corpus = getData()
     print(len(corpus))
     vocab = getVocab(corpus)
     vocab = sliceVocab(vocab, 5000, unk)
-    nce = NCE(vocab, 300, unk)
+    nce = NCE(vocab, embed_dim, unk)
 
     # nce.load()
     # nce.plot(200)
     # 1/0
     optimizer = torch.optim.SGD(nce.parameters(), 0.1)
-    for _ in range(3):
+    for _ in range(1):
         for targetwords, contextwords in getPair(corpus, 2, batch_size):
             targets, contexts = nce.get_targets_n_contexts(targetwords, contextwords)
-            loss = nce.forward(targets, contexts, batch_size * neg_size)
-            if torch.isinf(loss):
-                continue
+            loss = nce.forward(targets, contexts, batch_size, neg_size)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-    nce.store()
-    nce.plot()
+    # nce.store()
+    # nce.plot()

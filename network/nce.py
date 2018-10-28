@@ -6,6 +6,7 @@ import torch
 import codecs
 import numpy as np
 import random
+from matplotlib.font_manager import FontProperties
 
 torch.set_default_dtype(torch.float64)
 
@@ -43,13 +44,14 @@ class NCE(torch.nn.Module):
         _map = torch.tensor([[idx, self.find(word), ] for idx, word in enumerate(words)])
         return torch.sparse.FloatTensor(_map.t(), torch.ones(len(words)), torch.Size([len(words), self.vocab_size])).to_dense().t()
 
-    def forward(self, targets, contexts, batch_size, noise_count):
+    def forward(self, targets, contexts, noise_count, re=10):
         """
         target (V, x), one-hots, x = batch_size
         context (V, x), one-hots, x = batch_size
         self.embed (E, V)
         self.bias (V, 1)
         """
+        batch_size = targets.size()[1]
         # target rep
         q = torch.mm(self.embed, targets)
 
@@ -69,14 +71,15 @@ class NCE(torch.nn.Module):
 
         noises = self.get_noises(batch_size * noise_count)
         noise_loss = (1 - (torch.cat((s, ) * noise_count, dim=1) - torch.log(noise_count * self.p(noises))).sigmoid()).log().sum()
-
-        return -(loss + noise_loss) / batch_size + 0.1 * self.embed.pow(2).sum() / (self.embed_dim * self.vocab_size)
+        
+        return -(loss + noise_loss) / batch_size + re * self.embed.pow(2).sum() / (self.embed_dim * self.vocab_size)
 
     def get_targets_n_contexts(self, target_words, context_words):
         return self.indexfy(target_words), self.indexfy(context_words)
 
     def get_noises(self, count):
-        choice = np.random.choice(self.vocab, count, p=self.freq)
+        # choice = np.random.choice(self.vocab, count, p=self.freq)
+        choice = np.random.choice(self.vocab, count)
         return self.indexfy(choice)
 
     def store(self):
@@ -86,11 +89,13 @@ class NCE(torch.nn.Module):
     def load(self):
         data = torch.nn.Parameter(torch.load('model.torch'))
         self.embed = data
+        print(self.embed)
 
 
     def plot(self, plot_size=500):
         def plot_with_labels(low_dim_embs, labels, filename):
-            plt.rcParams['font.sans-serif'] = ['SimHei', ]
+            font = FontProperties(fname='/usr/share/fonts/truetype/wqy/wqy-microhei.ttc')
+            # plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', ]
             plt.rcParams['axes.unicode_minus'] = False
             plt.figure(figsize=(20, 20))
             for i, label in enumerate(labels):
@@ -102,7 +107,8 @@ class NCE(torch.nn.Module):
                     xytext=(5, 2),
                     textcoords="offset points",
                     ha="right",
-                    va="bottom"
+                    va="bottom",
+                    fontproperties=font,
                 )
             plt.savefig(filename)
 
@@ -115,10 +121,16 @@ class NCE(torch.nn.Module):
 
 
 
-def getData():
-    with codecs.open("shakespear.dev.txt", encoding="utf8") as f:
+def getCNData():
+    with codecs.open("news.dev.txt", encoding="utf8") as f:
+        content = f.read().replace(' ', '').lower()
+    return list(content)
+
+def getENData():
+    with codecs.open("en.dev.txt", encoding="utf8") as f:
         content = f.read().replace('\n', '').lower()
     return content.split(' ')
+
 
 def getVocab(corpus):
     vocab = {}
@@ -145,7 +157,7 @@ def getPair(corpus, window, batch_size):
     random.shuffle(ids)
     for process, index in enumerate(ids):
         word = corpus[index]
-        if not process % 5000:
+        if not process % 7000:
             print(process / L)
         start = max(0, index - window)
         end = min(L, index + window + 1)
@@ -164,22 +176,30 @@ if __name__ == '__main__':
     neg_size = 5
     embed_dim = 300
 
-    corpus = getData()
+    corpus = getCNData()
     print(len(corpus))
     vocab = getVocab(corpus)
     vocab = sliceVocab(vocab, 5000, unk)
     nce = NCE(vocab, embed_dim, unk)
 
     # nce.load()
-    # nce.plot(200)
+    # nce.plot(700)
     # 1/0
-    optimizer = torch.optim.SGD(nce.parameters(), 0.1)
+    optimizer = torch.optim.SGD(nce.parameters(), 0.5)
     for _ in range(1):
+        process = 0
         for targetwords, contextwords in getPair(corpus, 2, batch_size):
             targets, contexts = nce.get_targets_n_contexts(targetwords, contextwords)
-            loss = nce.forward(targets, contexts, batch_size, neg_size)
+            loss = nce.forward(targets, contexts, neg_size, 50)
+            if not process % 5000:
+                nce.store()
+                print("process saved")
+            if torch.isinf(loss):
+                print("got inf")
+                continue
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-    # nce.store()
-    # nce.plot()
+            process += 1
+    nce.store()
+    nce.plot()

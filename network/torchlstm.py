@@ -13,7 +13,7 @@ SOF = "<S>"
 UNK = "<UNK>"
 EOF = "<E>"
 vocab = [SOF, ] + list('abcdefghijklmnopqrstuvwxyz') + [EOF, UNK, ]
-# vocab = list(string.ascii_letters) + list(" .,;'-") + [EOF, UNK, ]
+vocab = [SOF, ] + list(string.ascii_letters) + list(" .,;'-") + [EOF, UNK, ]
 print(vocab)
 rvocab = {item: idx for idx, item in enumerate(vocab)}
 vocab_size = len(vocab)
@@ -75,24 +75,29 @@ class LSTM(nn.Module):
         output = self.dropout(output)
         output = self.softmax(output)
 
-        return it, ht, ct, output
+        return ht, ct, output
 
     def predict(self, pre):
+        with torch.no_grad():
+            return self._predict(pre)
+
+    def _predict(self, pre):
         result = pre
         h = self.initState()
         c = self.initState()
-        X, _ = vecs(pre, rvocab, SOF, EOF, UNK)
+        X, _ = vecs([SOF, ] + list(pre) + [EOF, ], rvocab, SOF, EOF, UNK)
         predict_c = None
         loop = 0
         while predict_c != EOF and len(result) < 20:
             if loop < len(pre):
                 i = X[loop]
-            i, h, c, o = self.forward(i.unsqueeze(0), h, c)
+            h, c, o = self.forward(i.unsqueeze(0), h, c)
             c_i = torch.argmax(o)
             predict_c = vocab[c_i.item()]
-            result = result + [predict_c, ]
-            _X, _ = vecs([predict_c, ], rvocab, SOF, EOF, UNK)
-            i = _X[0]
+            if loop >= len(pre):
+                result = result + [predict_c, ]
+            _X = _vecs([predict_c, ], rvocab, SOF, EOF, UNK)
+            i = _X[-1]
             loop += 1
         return ''.join(result)
 
@@ -103,14 +108,20 @@ class LSTM(nn.Module):
         for p in self.parameters():
             p.data.add_(-self.learning_rate, p.grad.data)
 
-def vecs(word, rvocab, sof, eof, unk):
-    word = [sof, ] + list(word) + [eof, ]
+def _vecs(word, rvocab, sof, eof, unk):
+    word = list(word)
     def find(character):
         return rvocab.get(character, rvocab.get(unk))
 
     _map = torch.tensor([[idx, find(item)] for idx, item in enumerate(word)])
     L = len(word)
     word_vec = torch.sparse.FloatTensor(_map.t(), torch.ones(L), torch.Size([L, len(rvocab)])).to_dense()
+    return word_vec
+
+def vecs(word, rvocab, sof, eof, unk):
+    def find(character):
+        return rvocab.get(character, rvocab.get(unk))
+    word_vec = _vecs(word, rvocab, sof, eof, unk)
     return word_vec[: -1], torch.LongTensor([find(item) for item in word[1: ]])
 
 def getENData():
@@ -124,10 +135,10 @@ def getENData():
     return result
 
 def getNamesData():
-    path = '/home/cgz/Downloads/names/names/'
+    path = './data/names/'
     names = []
     fps = os.listdir(path)
-    fps = ['English.txt', 'Scottish.txt']
+    # fps = ['English.txt', 'Scottish.txt']
     for txt in fps:
         with codecs.open(os.path.join(path, txt), encoding="utf8") as f:
             content = f.read()
@@ -138,13 +149,13 @@ def train(lstm):
     if not lstm:
         lstm = LSTM(vocab_size, h_size, vocab_size)
 
-    words = getENData()
+    words = getNamesData()
     random.shuffle(words)
     L = len(words)
     print(L)
     sum_loss = 0
     for process, word in enumerate(words):
-        X, Y = vecs(word, rvocab, SOF, EOF, UNK)
+        X, Y = vecs([SOF, ] + list(word) + [EOF, ], rvocab, SOF, EOF, UNK)
         h = lstm.initState()
         c = lstm.initState()
         loss = 0
@@ -157,7 +168,7 @@ def train(lstm):
             x = X[idx]
             y = Y[idx]
 
-            i, h, c, o = lstm(x.unsqueeze(0), h, c)
+            h, c, o = lstm(x.unsqueeze(0), h, c)
             l = lstm.loss(o, y.unsqueeze(0))
 
             loss += l
@@ -174,16 +185,17 @@ def train(lstm):
     return lstm
 
 if __name__ == '__main__':
-    lstm = LSTM(vocab_size, h_size, vocab_size)
+    # lstm = LSTM(vocab_size, h_size, vocab_size)
+    lstm = torch.load('lstm.torch')
     # lstm = None
     for _ in range(20):
         lstm = train(lstm)
         torch.save(lstm, "lstm.torch")
-        starts = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'u', 'x']
+        starts = 'ABCDEFGUX'
         for c in starts:
-            print(lstm.predict([sof, c]))
+            print(lstm.predict([SOF, c]))
 
-    starts = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'u', 'x']
+    starts = 'ABCDEFGUX'
     for c in starts:
-        print(lstm.predict([sof, c]))
+        print(lstm.predict([SOF, c]))
 

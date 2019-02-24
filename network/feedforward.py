@@ -1,13 +1,14 @@
 import random
 import torch
+"""
 from dataset.mnist import data
-
 data = list(data)
 random.shuffle(data)
 count = len(data)
 split = int(count * 0.9)
 train, test = data[: split], data[-(count - split): ]
 torch.set_default_dtype(torch.float)
+"""
 
 class NN(object):
     def __init__(self, shape, eta=None, device=None):
@@ -15,6 +16,7 @@ class NN(object):
         self._eta = eta or 1e-3
         self._weights = []
         self._bias = []
+        self.shape = shape
         for d, next_d in zip(shape[: -1], shape[1: ]):
             weight = torch.randn(next_d, d, device=self._dev, dtype=torch.float, requires_grad=True)
             self._weights.append(weight)
@@ -32,17 +34,20 @@ class NN(object):
         for i in range(epochs):
             random.shuffle(train)
             print("Epoch %d starts"%(i+1))
+            _sum = 0
             for index in range(0, len(train), batch_size):
                 batch = train[index: index + batch_size]
-                loss = torch.zeros(10, 1)
+                loss = 0
                 for x, y in batch:
                     yhat = self._forward(x)
                     loss += (yhat - y).pow(2)
                 loss_sum = loss.sum() / (2 * batch_size)
+                _sum += loss_sum
                 self.backward(loss_sum, batch_size)
+            print(_sum)
             if test:
                 result = self.evaluate(test)
-                print("Epoch %d: %d / %d"%(i+1, result, len(train)))
+                print("Epoch %d: %d / %d"%(i+1, result, len(test)))
             else:
                 print("Epoch %d ends"%(i+1))
 
@@ -66,11 +71,22 @@ class NN(object):
             test_results.append((yhat, torch.argmax(y)))
         return sum(int(x == y) for x, y in test_results)
 
+    def evaluate2(self, test_data):
+        correct = 0
+        for x, y in test_data:
+            yhat = self._forward(x).item()
+            if yhat > 0.5 and y.item():
+                correct += 1
+            if yhat < 0.5 and not y.item():
+                correct += 1
+
+        return correct
+
 # device = torch.device("cuda:0")
-nn = NN((784, 30, 10), eta=1.2)
+# nn = NN((784, 30, 10), eta=1.2)
 # x, y = train[0]
 # print(y)
 # print(x)
 # result = nn._forward(x)
 # print(result)
-nn.forward(train, 30, 10, test)
+# nn.forward(train, 30, 10, test)

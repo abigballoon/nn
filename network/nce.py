@@ -70,16 +70,33 @@ class NCE(torch.nn.Module):
         # score
         s = ((r * q).sum(0) + b) / self.embed_dim
 
-        loss = (s - torch.log(noise_count * self.p(targets))).sigmoid().log().sum()
+        # loss = (s - torch.log(noise_count * self.p(targets))).sigmoid().log().sum()
+        loss = (s).sigmoid().log().sum() / batch_size
 
         noises = self.get_noises(batch_size * noise_count)
+        nt = torch.cat((targets, ) * noise_count, dim=0)
+        # noise target rep
+        nq = self.embed.t()[nt].t()
 
-        noise_loss = (1 - (torch.cat((s, ) * noise_count, dim=1) - torch.log(noise_count * self.p(noises))).sigmoid()).log().sum()
+        # noise context rep
+        nr = self.embed.t()[noises].t()
 
-        total_loss = -(loss + noise_loss) / batch_size
-        penalty = re * (q.pow(2).sum() + r.pow(2).sum()) / (self.embed_dim * batch_size)
-        # print(total_loss)
-        # print(penalty)
+        # noise bias
+        nb = self.bias[nt].t()
+
+        # noise score
+        ns = ((nr * nq).sum(0) + nb) / self.embed_dim
+
+        # noise_loss = (1 - (torch.cat((s, ) * noise_count, dim=1) - torch.log(noise_count * self.p(noises))).sigmoid()).log().sum()
+        # np = self.p(torch.cat((targets, ) * noise_count, dim=0))
+        # noise_loss = (1 - (ns - torch.log(np)).sigmoid()).log().sum()# * noise_count
+        noise_loss = (1 - (ns).sigmoid()).log().sum() / (batch_size * noise_count)
+        # noise_loss = (1 - ns.sigmoid()).log().sum() / noise_count
+        # print(loss, noise_loss)
+
+        total_loss = -(loss + noise_loss)
+        # penalty = re * (q.pow(2).sum() + r.pow(2).sum()) / (self.embed_dim * batch_size)
+        # penalty += re * (nq.pow(2).sum() + nr.pow(2).sum()) / (self.embed_dim * batch_size * noise_count)
         del q
         del r
         del b
@@ -87,14 +104,16 @@ class NCE(torch.nn.Module):
         del loss
         del noises
         del noise_loss
-
-        return total_loss + penalty
+        # print(total_loss, penalty)
+        return total_loss# + penalty
 
     def get_targets_n_contexts(self, target_words, context_words):
         return self.indexfy(target_words), self.indexfy(context_words)
 
     def get_noises(self, count):
-        choice = np.random.choice(self.vocab, count)
+        choice = np.random.choice(self.vocab, count, p=self.freq)
+        # choice = np.random.choice(self.vocab, count)
+        # print(choice, count)
         result = self.indexfy(choice)
         return result
 
@@ -242,11 +261,14 @@ def _getPair(corpus, window):
 
 def getLinePair(corpus, window, batch_size):
     """
-    corpus Array<Array<string>>
-    """
-    data = []
-    for line in corpus:
-        data = list(_getPair(line, window))
+    corpus Array<Array<string>> """
+    step = 100
+    random.shuffle(corpus)
+    for lineidx in range(0, len(corpus), step):
+        data = []
+        lines = corpus[lineidx: lineidx + step]
+        for line in lines:
+            data += list(_getPair(line, window))
         random.shuffle(data)
         for index in range(0, len(data), batch_size):
             batch = data[index: index + batch_size]
@@ -255,7 +277,7 @@ def getLinePair(corpus, window, batch_size):
 
 if __name__ == '__main__':
     unk = '<UNK>'
-    batch_size = 600
+    batch_size = 60
     neg_size = 60
     embed_dim = 300
 
@@ -266,26 +288,41 @@ if __name__ == '__main__':
         vocab = pickle.load(f)
         print('vocob length', len(vocab))
     vocab = sliceVocab(vocab, 100000, unk)
-    # nce = NCE(vocab, embed_dim, unk)
+    # vocab = sliceVocab(vocab, 5000, unk)
+
+    DUMP = True
+    RELOAD = True
+    if DUMP or RELOAD:
+        nce = torch.load('nce.torch')
+    else:
+        nce = NCE(vocab, embed_dim, unk)
+    print(nce.vocab[: 10])
+    print(nce.vocab[9470])
+    1/0
+
     del vocab
-    nce = torch.load('nce.torch')
+    print(nce.embed)
 
     # nce.load()
-    # plot(nce, 900)
-    # nce.dump()
-    # 1/0
-    optimizer = torch.optim.SGD(nce.parameters(), 0.08)
+    if DUMP:
+        plot(nce, 900)
+        nce.dump()
+        1/0
+
+    # optimizer = torch.optim.SGD(nce.parameters(), 2.5)
+    optimizer = torch.optim.Adam(nce.parameters())
+    stage = 500
     for _ in range(5):
         process = 0
         sum_loss = 0
         start = time.time()
         for targetwords, contextwords in getLinePair(corpus, 2, batch_size):
             targets, contexts = nce.get_targets_n_contexts(targetwords, contextwords)
-            loss = nce.forward(targets, contexts, neg_size, 3.0)
+            loss = nce.forward(targets, contexts, neg_size, 0)
             sum_loss += loss.item()
-            if not process % 1000:
+            if not process % stage:
                 print(nce.embed)
-                print(sum_loss / 1000.0)
+                print(sum_loss / float(stage))
                 sum_loss = 0
                 start = time.time()
                 nce.store()
@@ -304,6 +341,8 @@ if __name__ == '__main__':
 
             process += 1
             if not process % 50:
-                print("remain %0.2f"%(((time.time() - start) / process) * (1000 - process % 1000)))
+                real_process = process % stage
+                if real_process:
+                    print("remain %0.2f"%(((time.time() - start) / real_process) * (stage - real_process)))
     nce.store()
     nce.plot()

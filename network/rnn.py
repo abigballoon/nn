@@ -47,6 +47,9 @@ class RNN(object):
         return y
 
     def forward(self, train, epochs, batch_size, eta=None, test=None):
+        """
+        train: Array of (1, x) shape matrix
+        """
         for i in range(epochs):
             random.shuffle(train)
             train_size = len(train)
@@ -58,10 +61,11 @@ class RNN(object):
                     for yhatt, yt in zip(yhat, Y):
                         # loss_sum += -yt.mm(torch.log(yhatt)).sum() / len(Y)
                         tmp = (-yt * torch.log(yhatt) - (1 - yt) * torch.log(1 - yhatt)).sum()
-                        if not torch.isnan(tmp).item():
+                        if not torch.isnan(tmp).item() and not torch.isinf(tmp).item():
                             loss_sum += tmp
                 loss_sum = loss_sum / batch_size
                 self.backward(loss_sum, batch_size)
+            print(loss_sum)
 
     def backward(self, loss, batch_size):
         loss.backward()
@@ -76,5 +80,7 @@ class RNN(object):
                 w -= self.eta * w.grad / batch_size
                 w.grad.zero_()
 
-nn = RNN((5, 10), eta=0.5)
-nn.forward(train, 30, 10)
+
+if __name__ == '__main__':
+    nn = RNN((5, 10), eta=0.5)
+    nn.forward(train, 30, 10)

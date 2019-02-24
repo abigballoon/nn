@@ -4,14 +4,15 @@ import codecs
 import time
 import random
 import string
+import os
 
 torch.set_default_dtype(torch.float)
 
 SOF = "<S>"
 UNK = "<UNK>"
 EOF = "<E>"
-# vocab = list('abcdefghijklmnopqrstuvwxyz') + [EOF, UNK, ]
-vocab = [SOF, ] + list(string.ascii_letters) + list(" .,;'-") + [EOF, UNK, ]
+vocab = list('abcdefghijklmnopqrstuvwxyz') + [EOF, UNK, ]
+# vocab = list(string.ascii_letters) + list(" .,;'-") + [EOF, UNK, ]
 print(vocab)
 rvocab = {item: idx for idx, item in enumerate(vocab)}
 vocab_size = len(vocab)
@@ -61,8 +62,6 @@ class RNN(nn.Module):
         for p in self.parameters():
             p.data.add_(-self.learning_rate, p.grad.data)
 
-        self.zero_grad()
-
     def predict(self, pre):
         result = pre
         h = torch.zeros(1, self.hidden_size)
@@ -82,7 +81,7 @@ class RNN(nn.Module):
         return ''.join(result)
 
 def vecs(word, rvocab, sof, eof, unk):
-    word = [SOF] + list(word) + [eof, ]
+    word = list(word) + [eof, ]
     def find(character):
         return rvocab.get(character, rvocab.get(unk))
 
@@ -92,8 +91,8 @@ def vecs(word, rvocab, sof, eof, unk):
     return word_vec[: -1], torch.LongTensor([find(item) for item in word[1: ]])
 
 def getENData():
-    with codecs.open("shakespear.dev.txt", encoding="utf8") as f:
-        content = f.read().replace('\n', '')
+    with codecs.open("en.dev.txt", encoding="utf8") as f:
+        content = f.read().replace('\n', '').lower()
     words = list(filter(lambda x: len(x) > 1, content.split(' ')))
     result = []
     for item in words:
@@ -102,16 +101,22 @@ def getENData():
     return result
 
 def getNamesData():
-    with codecs.open("./data/names/English.txt", encoding="utf8") as f:
-        content = f.read()
-    return list(filter(lambda x: len(x) > 1, content.split('\n')))
+    path = '/home/cgz/Downloads/names/names/'
+    names = []
+    fps = os.listdir(path)
+    fps = ['English.txt', 'Scottish.txt']
+    for txt in fps:
+        with codecs.open(os.path.join(path, txt), encoding="utf8") as f:
+            content = f.read()
+            names += list(filter(lambda x: len(x) > 1, content.split('\n')))
+    return names
 
 def train(rnn=None):
     h_size = 200
     if not rnn:
         rnn = RNN(vocab_size, h_size, vocab_size)
 
-    words = getNamesData()
+    words = getENData()
     random.shuffle(words)
     L = len(words)
     print(L)
@@ -120,6 +125,7 @@ def train(rnn=None):
         X, Y = vecs(word, rvocab, SOF, EOF, UNK)
         h = torch.zeros(1, h_size)
         loss = 0
+        rnn.zero_grad()
         for idx in range(X.size()[0]):
             x = X[idx]
             y = Y[idx]
@@ -142,12 +148,12 @@ def train(rnn=None):
     
 
 if __name__ == '__main__':
-    rnn = torch.load("rnn.torch")
-    # rnn = None
+    # rnn = torch.load("rnn.torch")
+    rnn = None
     for _ in range(20):
         rnn = train(rnn)
         torch.save(rnn, "rnn.torch")
-    starts = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'U', 'X']
-    for c in starts:
-        print(rnn.predict([SOF, c]))
+        starts = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'u', 'x']
+        for c in starts:
+            print(rnn.predict([c]))
 

@@ -1,4 +1,4 @@
-import numpy as np
+
 import random
 
 from common.math import sigmoid, sigmoid_prime, mse_derivative

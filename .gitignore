@@ -6,3 +6,4 @@ notes.md
 test/
 *.png
 log/
+*.torch

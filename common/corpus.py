@@ -54,16 +54,22 @@ def getIMDBData():
         pickle.dump(lines, f)
     return lines
 
-def getTaptapData():
+def getTaptapData(labeled=False):
     FP = 'yys.taptap.txt'
     with codecs.open(FP, encoding='utf8') as f:
         content = f.read()
     lines = content.split('\n')
     result = []
     for data in lines:
-        line = data.replace('\\n', ' ').split('\t')[0]
+        splited = data.replace('\\n', ' ').split('\t')
+        if len(splited) != 2: continue
+        line, cat = splited
         line = re.sub(' +', ' ', line)
         if not line: continue
+        if not int(cat): continue
         array = list(line)
-        result.append(array)
+        if labeled:
+            result.append((array, int(cat) - 1, ))
+        else:
+            result.append(array)
     return result

@@ -126,10 +126,9 @@ class NCE(torch.nn.Module):
         self.embed = data
 
 
-def plot(self, plot_size=500):
+def plot(nce, fp, plot_size=500):
     def plot_with_labels(low_dim_embs, labels, filename):
-        font = FontProperties(fname='/usr/share/fonts/truetype/wqy/wqy-microhei.ttc')
-        # plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', ]
+        plt.rcParams['font.sans-serif'] = ['SimHei', ]
         plt.rcParams['axes.unicode_minus'] = False
         plt.figure(figsize=(40, 40))
         for i, label in enumerate(labels):
@@ -142,20 +141,16 @@ def plot(self, plot_size=500):
                 textcoords="offset points",
                 ha="right",
                 va="bottom",
-                fontproperties=font,
             )
         plt.savefig(filename)
 
     logger.info("start plot")
-    labels = [self.vocab[i] for i in range(plot_size)]
-    data = self.embed.detach().t()[:plot_size, :]
-    del self
+    labels = [nce.vocab[i] for i in range(plot_size)]
+    data = nce.embed.detach().t()[:plot_size, :]
     tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=5000, method="exact")
     low_dim_embs = tsne.fit_transform(data)
-    plot_with_labels(low_dim_embs, labels, "tsne_nce.png")
+    plot_with_labels(low_dim_embs, labels, fp)
     logger.info("end plot")
-
-
 
 def getCNData():
     with codecs.open("news.dev.txt", encoding="utf8") as f:

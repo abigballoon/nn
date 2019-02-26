@@ -10,6 +10,8 @@ import pickle
 import os
 import time
 from matplotlib.font_manager import FontProperties
+from common.logger import logger
+from common.err import StorePathFileExist
 
 torch.set_default_dtype(torch.float64)
 
@@ -92,7 +94,6 @@ class NCE(torch.nn.Module):
         # noise_loss = (1 - (ns - torch.log(np)).sigmoid()).log().sum()# * noise_count
         noise_loss = (1 - (ns).sigmoid()).log().sum() / (batch_size * noise_count)
         # noise_loss = (1 - ns.sigmoid()).log().sum() / noise_count
-        # print(loss, noise_loss)
 
         total_loss = -(loss + noise_loss)
         # penalty = re * (q.pow(2).sum() + r.pow(2).sum()) / (self.embed_dim * batch_size)
@@ -104,7 +105,6 @@ class NCE(torch.nn.Module):
         del loss
         del noises
         del noise_loss
-        # print(total_loss, penalty)
         return total_loss# + penalty
 
     def get_targets_n_contexts(self, target_words, context_words):
@@ -113,15 +113,8 @@ class NCE(torch.nn.Module):
     def get_noises(self, count):
         choice = np.random.choice(self.vocab, count, p=self.freq)
         # choice = np.random.choice(self.vocab, count)
-        # print(choice, count)
         result = self.indexfy(choice)
         return result
-
-    def store(self, name=None):
-        torch.save(self, 'nce.torch')
-
-        with open('vocab.pickle', 'wb+') as f:
-            pickle.dump(self.vocab, f)
 
     def dump(self, name=None):
         data = self.embed.detach()
@@ -131,7 +124,6 @@ class NCE(torch.nn.Module):
         return
         data = torch.nn.Parameter(torch.load('model.torch'))
         self.embed = data
-        print(self.embed)
 
 
 def plot(self, plot_size=500):
@@ -154,14 +146,14 @@ def plot(self, plot_size=500):
             )
         plt.savefig(filename)
 
-    print("start plot")
+    logger.info("start plot")
     labels = [self.vocab[i] for i in range(plot_size)]
     data = self.embed.detach().t()[:plot_size, :]
     del self
     tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=5000, method="exact")
     low_dim_embs = tsne.fit_transform(data)
     plot_with_labels(low_dim_embs, labels, "tsne_nce.png")
-    print("end plot")
+    logger.info("end plot")
 
 
 
@@ -202,6 +194,9 @@ def getIMDBData():
     return lines
 
 def getVocab(corpus):
+    """
+    @return [word, count][]
+    """
     vocab = {}
     for line in corpus:
         for item in line:
@@ -215,33 +210,12 @@ def getVocab(corpus):
     return array
 
 def sliceVocab(vocab, length, unk):
-    print(len(vocab))
+    logger.info("corpus length: %d"%len(vocab))
     minus = length - 1
     usable = vocab[: minus]
     dump = vocab[minus: ]
     usable.append((unk, sum([item[1] for item in dump])))
     return usable
-
-def getPair(corpus, window, batch_size):
-    L = len(corpus)
-    target = []
-    context = []
-    ids = [_ for _ in range(L)]
-    random.shuffle(ids)
-    for process, index in enumerate(ids):
-        word = corpus[index]
-        if not process % 7000:
-            print(process / L)
-        start = max(0, index - window)
-        end = min(L, index + window + 1)
-        for _context in corpus[start: index] + corpus[index + 1: end]:
-            target.append(word)
-            context.append(_context)
-            if len(target) == batch_size:
-                yield target, context
-                target = []
-                context = []
-    yield target, context
 
 def _getPair(corpus, window):
     """
@@ -274,45 +248,21 @@ def getLinePair(corpus, window, batch_size):
             batch = data[index: index + batch_size]
             yield [item[0] for item in batch], [item[1] for item in batch]
 
+def check_file_exists(fp, overwrite):
+    if not overwrite and os.path.exists(fp):
+        raise StorePathFileExist(fp)
 
-if __name__ == '__main__':
-    unk = '<UNK>'
-    batch_size = 60
-    neg_size = 60
-    embed_dim = 300
+def default_data_saver(obj, fp):
+    torch.save(obj, fp)
+    logger.info("process saved")
 
-    corpus = getIMDBData()
-    print('corpus length', len(corpus))
-    # vocab = getVocab(corpus)
-    with open('rawvocab.pickle', 'rb') as f:
-        vocab = pickle.load(f)
-        print('vocob length', len(vocab))
-    vocab = sliceVocab(vocab, 100000, unk)
-    # vocab = sliceVocab(vocab, 5000, unk)
-
-    DUMP = True
-    RELOAD = True
-    if DUMP or RELOAD:
-        nce = torch.load('nce.torch')
-    else:
-        nce = NCE(vocab, embed_dim, unk)
-    print(nce.vocab[: 10])
-    print(nce.vocab[9470])
-    1/0
-
-    del vocab
-    print(nce.embed)
-
-    # nce.load()
-    if DUMP:
-        plot(nce, 900)
-        nce.dump()
-        1/0
-
-    # optimizer = torch.optim.SGD(nce.parameters(), 2.5)
-    optimizer = torch.optim.Adam(nce.parameters())
-    stage = 500
-    for _ in range(5):
+def do_train(nce, optimizer, corpus, batch_size=60, neg_size=60, epoch=5, report_every=500, countdown_every=50, datasaver=None, save_fp=None, save_overwrite=False):
+    """
+    @input corpus: string[][], array of sentences, sentences are array of words.
+    """
+    check_file_exists(save_fp, save_overwrite)
+    datasaver = datasaver or default_data_saver
+    for _ in range(epoch):
         process = 0
         sum_loss = 0
         start = time.time()
@@ -320,15 +270,14 @@ if __name__ == '__main__':
             targets, contexts = nce.get_targets_n_contexts(targetwords, contextwords)
             loss = nce.forward(targets, contexts, neg_size, 0)
             sum_loss += loss.item()
-            if not process % stage:
-                print(nce.embed)
-                print(sum_loss / float(stage))
+            if not process % report_every:
+                logger.info(nce.embed)
+                logger.info("average loss: %f"%(sum_loss / float(report_every)))
                 sum_loss = 0
                 start = time.time()
-                nce.store()
-                print("process saved")
+                default_data_saver(nce, save_fp)
             if torch.isinf(loss):
-                print("got inf")
+                logger.warning("got inf")
                 continue
             optimizer.zero_grad()
             loss.backward()
@@ -340,9 +289,39 @@ if __name__ == '__main__':
             del loss
 
             process += 1
-            if not process % 50:
-                real_process = process % stage
+            if not process % countdown_every:
+                real_process = process % report_every
                 if real_process:
-                    print("remain %0.2f"%(((time.time() - start) / real_process) * (stage - real_process)))
-    nce.store()
-    nce.plot()
+                    logger.info("remain %0.2fs"%(((time.time() - start) / real_process) * (report_every - real_process)))
+
+if __name__ == '__main__':
+    unk = '<UNK>'
+
+    corpus = getIMDBData()
+    logger.info('corpus length', len(corpus))
+    # vocab = getVocab(corpus)
+    with open('rawvocab.pickle', 'rb') as f:
+        vocab = pickle.load(f)
+        logger.info('vocob length', len(vocab))
+    vocab = sliceVocab(vocab, 100000, unk)
+    # vocab = sliceVocab(vocab, 5000, unk)
+
+    DUMP = False
+    RELOAD = True
+    if DUMP or RELOAD:
+        nce = torch.load('nce.torch')
+    else:
+        nce = NCE(vocab, embed_dim, unk)
+    # optimizer = torch.optim.SGD(nce.parameters(), 2.5)
+    opti = torch.optim.Adam(nce.parameters())
+
+    del vocab
+    print(nce.embed)
+
+    # nce.load()
+    if DUMP:
+        plot(nce, 900)
+        nce.dump()
+        1/0
+
+    do_train(nce, optimizer=opti, corpus=corpus, save_fp='nce.torch', save_overwrite=True)

@@ -1,8 +1,11 @@
+# -*- coding: utf8 -*-
+
 import os
 import pickle
 import random
 import codecs
 import re
+import numpy as np
 import pkuseg
 
 from common.logger import logger
@@ -55,9 +58,32 @@ def getIMDBData():
         pickle.dump(lines, f)
     return lines
 
-def segments(sentence):
-    seg = pkuseg.pkuseg()
-    return seg.cut(sentence)
+def segments(data, filename, nthread=20):
+    """
+    单线程分词太慢了，最好用并行分
+    @input data: [sentence, label][]
+    @input filename: 会用来存3个文件，
+                     一个是等待分词的txt文件，
+                     一个是segments的txt文件，
+                     一个segments+label的pickle
+    @return void, 会写一个pickle文件
+    """
+    corpus_fp = '%s.corpus.txt'%filename
+    segments_fp = '%s.splited.txt'%filename
+    pickle_fp = '%s.corpus.pickle'%filename
+    with codecs.open(corpus_fp, 'w+', encoding='utf8') as f:
+        for sentence, label in data:
+            f.write(sentence)
+            f.write('\n')
+    pkuseg.test(corpus_fp, segments_fp, nthread=nthread)
+    with codecs.open(segments_fp, encoding='utf8') as f:
+        content = f.read()
+    result = []
+    for line, ori in zip(content.split('\n'), data):
+        if not line: continue
+        result.append((line.split(' '), ori[1], ))
+    with open(pickle_fp, 'wb+') as f:
+        pickle.dump(result, f)
 
 def getTaptapData(fp, labeled=False):
     with codecs.open(fp, encoding='utf8') as f:
@@ -71,11 +97,10 @@ def getTaptapData(fp, labeled=False):
         line = re.sub(' +', ' ', line)
         if not line: continue
         if not int(cat): continue
-        array = segments(line)
         if labeled:
-            result.append((array, int(cat) - 1, ))
+            result.append((line, int(cat) - 1, ))
         else:
-            result.append(array)
+            result.append(line)
     return result
 
 def splitTrainTest(XY):

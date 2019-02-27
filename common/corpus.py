@@ -73,3 +73,30 @@ def getTaptapData(labeled=False):
         else:
             result.append(array)
     return result
+
+def splitTrainTest(XY):
+    L = len(XY)
+    ratio = 0.8
+    split = int(ratio * L)
+    train, test = XY[: split], XY[split: ]
+    train = padData(train)
+    return train, test
+
+def padData(data):
+    result = {}
+    max = 0
+    for x, y in data:
+        if y not in result:
+            result[y] = []
+        result[y].append(x)
+        L = len(result[y])
+        if L > max:
+            max = L
+    output = []
+    for y, x in result.items():
+        for item in x:
+            output.append([item, y])
+        for item in np.random.choice(x, max - len(x)):
+            output.append([item, y])
+    random.shuffle(output)
+    return output

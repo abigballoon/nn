@@ -4,6 +4,7 @@ import time
 import numpy as np
 from common.corpus import getTaptapData
 from common.logger import logger
+from common.storage import default_data_saver, check_file_exists
 
 class LstmCat(torch.nn.Module):
     def __init__(self, input_dim, hidden_dim, cat_dim, loss, embed, vocab, unk, layers=1, bidirectional=False):
@@ -52,40 +53,29 @@ class LstmCat(torch.nn.Module):
         return output, loss
 
     def evaluate(self, test):
-        correct = 0
-        for XY in test:
-            x, y = XY
-            output, _ = self.forward(XY)
-            result = torch.argmax(output)
-            if result.item() == y:
-                correct += 1
-        return correct
+        with torch.no_grad():
+            correct = 0
+            for XY in test:
+                x, y = XY
+                output, _ = self.forward(XY)
+                result = torch.argmax(output)
+                if result.item() == y:
+                    correct += 1
+            return correct
 
-def padData(data):
-    result = {}
-    max = 0
-    for x, y in data:
-        if y not in result:
-            result[y] = []
-        result[y].append(x)
-        L = len(result[y])
-        if L > max:
-            max = L
-    output = []
-    for y, x in result.items():
-        for item in x:
-            output.append([item, y])
-        for item in np.random.choice(x, max - len(x)):
-            output.append([item, y])
-    random.shuffle(output)
-    return output
+def do_train(lstmcat, opti, train, test, batch_size=50, epoches=5, report_every=2000, save_prefix=None, save_overwrite=False):
+    train_fp = "%s.train"%save_prefix
+    test_fp = "%s.test"%save_prefix
+    model_fp = "%s.torch"%save_prefix
+    fps = [train_fp, test_fp, model_fp]
+    for fp in fps:
+        check_file_exists(fp, save_overwrite)
 
-def do_train(lstmcat, opti, XY, batch_size=50, epoches=5, report_every=2000):
-    L = len(XY)
-    ratio = 0.8
-    split = int(ratio * L)
-    train, test = XY[: split], XY[split: ]
-    train = padData(train)
+    def store():
+        torch.save(train, train_fp)
+        torch.save(test, test_fp)
+        torch.save(lstmcat, model_fp)
+
     trainL = len(train)
     mark = report_every
     for e in range(epoches):
@@ -113,6 +103,7 @@ def do_train(lstmcat, opti, XY, batch_size=50, epoches=5, report_every=2000):
                 logger.info("training process: %d / %d"%(process, trainL))
                 loss_sum = 0
                 mark += report_every
+                store()
         correct = lstmcat.evaluate(test)
         print("Epoch %d: %d / %d"%(e + 1, correct, len(test)))
 

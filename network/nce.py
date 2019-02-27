@@ -12,6 +12,7 @@ import time
 from matplotlib.font_manager import FontProperties
 from common.logger import logger
 from common.err import StorePathFileExist
+from common.storage import default_data_saver, check_file_exists
 
 torch.set_default_dtype(torch.float64)
 
@@ -242,14 +243,6 @@ def getLinePair(corpus, window, batch_size):
         for index in range(0, len(data), batch_size):
             batch = data[index: index + batch_size]
             yield [item[0] for item in batch], [item[1] for item in batch]
-
-def check_file_exists(fp, overwrite):
-    if not overwrite and os.path.exists(fp):
-        raise StorePathFileExist(fp)
-
-def default_data_saver(obj, fp):
-    torch.save(obj, fp)
-    logger.info("process saved")
 
 def do_train(nce, optimizer, corpus, batch_size=60, neg_size=60, epoch=5, report_every=500, countdown_every=50, datasaver=None, save_fp=None, save_overwrite=False):
     """

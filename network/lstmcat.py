@@ -7,7 +7,7 @@ from common.logger import logger
 from common.storage import default_data_saver, check_file_exists
 
 class LstmCat(torch.nn.Module):
-    def __init__(self, input_dim, hidden_dim, cat_dim, loss, embed, vocab, unk, layers=1, bidirectional=False):
+    def __init__(self, input_dim, hidden_dim, cat_dim, loss, embed, vocab, unk, layers=1, bidirectional=False, truncated=0):
         super(LstmCat, self).__init__()
 
         self.vocab = vocab 
@@ -23,6 +23,7 @@ class LstmCat(torch.nn.Module):
             self.fc = torch.nn.Linear(hidden_dim, cat_dim)
         self.loss = loss
         self.cat_dim = cat_dim
+        self.truncated = truncated
 
     def select(self, words):
         return self.embed.t()[words]
@@ -37,7 +38,7 @@ class LstmCat(torch.nn.Module):
     def forward(self, XY):
         sentence, y = XY
         Y = torch.LongTensor([y, ])
-        X = self.indexfy(sentence)
+        X = self.indexfy(sentence[: self.truncated] if self.truncated else sentence)
 
         data = list(X)
         data = [item.unsqueeze(1).t() for item in data]

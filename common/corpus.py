@@ -3,6 +3,7 @@ import pickle
 import random
 import codecs
 import re
+import pkuseg
 
 from common.logger import logger
 
@@ -54,9 +55,12 @@ def getIMDBData():
         pickle.dump(lines, f)
     return lines
 
-def getTaptapData(labeled=False):
-    FP = 'yys.taptap.txt'
-    with codecs.open(FP, encoding='utf8') as f:
+def segments(sentence):
+    seg = pkuseg.pkuseg()
+    return seg.cut(sentence)
+
+def getTaptapData(fp, labeled=False):
+    with codecs.open(fp, encoding='utf8') as f:
         content = f.read()
     lines = content.split('\n')
     result = []
@@ -67,7 +71,7 @@ def getTaptapData(labeled=False):
         line = re.sub(' +', ' ', line)
         if not line: continue
         if not int(cat): continue
-        array = list(line)
+        array = segments(line)
         if labeled:
             result.append((array, int(cat) - 1, ))
         else:

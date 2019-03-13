@@ -77,8 +77,6 @@ class Fit(torch.nn.Module):
         self.rawvocab = getVocab('rawvocab.pickle')
         self.UNK = '<UNK>'
         self.vocab = [item[0] for item in sliceVocab(self.rawvocab, 100000, self.UNK)]
-        print(self.vocab[: 10])
-        print(self.vocab[9470])
         self.rvocab = {word: idx for idx, word in enumerate(self.vocab)}
 
         self.embed = torch.load('imdb2.torch').float()
@@ -212,7 +210,7 @@ class Fit(torch.nn.Module):
                 loss_sum += loss.item()
                 loss.backward()
                 self.optim.step()
-    
+
                 if not process % 2000:
                     print(loss_sum)
                     print(process / len(train))

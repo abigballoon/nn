@@ -7,7 +7,7 @@ from common.logger import logger
 from common.storage import default_data_saver, check_file_exists
 
 class LstmCat(torch.nn.Module):
-    def __init__(self, input_dim, hidden_dim, cat_dim, loss, embed, vocab, unk, layers=1, bidirectional=False, truncated=0):
+    def __init__(self, input_dim, hidden_dim, cat_dim, loss, embed, vocab, unk, layers=1, bidirectional=False, truncated=0, dropout=None):
         super(LstmCat, self).__init__()
 
         self.vocab = vocab 
@@ -16,6 +16,7 @@ class LstmCat(torch.nn.Module):
         self.UNK = unk
         self.bidirectional = bidirectional
 
+        self.layers = layers
         self.lstm = torch.nn.LSTM(input_dim, hidden_dim, num_layers=layers, bidirectional=bidirectional)
         if self.bidirectional:
             self.fc = torch.nn.Linear(hidden_dim * 2, cat_dim)
@@ -24,6 +25,9 @@ class LstmCat(torch.nn.Module):
         self.loss = loss
         self.cat_dim = cat_dim
         self.truncated = truncated
+        self.dropout = None
+        if dropout:
+            self.dropout = torch.nn.Dropout(dropout)
 
     def select(self, words):
         return self.embed.t()[words]
@@ -37,18 +41,20 @@ class LstmCat(torch.nn.Module):
 
     def forward(self, XY):
         sentence, y = XY
-        Y = torch.LongTensor([y, ])
+        Y = torch.LongTensor([y, ]).cuda()
         X = self.indexfy(sentence[: self.truncated] if self.truncated else sentence)
 
         data = list(X)
         data = [item.unsqueeze(1).t() for item in data]
-        data = torch.cat(data, dim=0).unsqueeze(1)
+        data = torch.cat(data, dim=0).unsqueeze(1).cuda()
+        if self.dropout:
+            data = self.dropout(data)
         o, (hidden, cel) = self.lstm(data)
         if self.bidirectional:
             hidden = torch.cat([hidden[-2], hidden[-1]], dim=1)
 
         output = self.fc(hidden.squeeze(0)).sigmoid()
-        if self.bidirectional:
+        if self.bidirectional or self.layers > 1:
             output = output.unsqueeze(0)
         loss = self.loss(output, Y)
         return output, loss
@@ -78,9 +84,9 @@ def do_train(lstmcat, opti, train, test, batch_size=50, epoches=5, report_every=
         torch.save(lstmcat, model_fp)
 
     trainL = len(train)
-    mark = report_every
     for e in range(epoches):
         random.shuffle(train)
+        mark = report_every
         process = 0
         loss_sum = 0
 
@@ -99,14 +105,14 @@ def do_train(lstmcat, opti, train, test, batch_size=50, epoches=5, report_every=
             loss.backward()
             opti.step()
 
-            if not process > mark:
+            if process > mark:
                 logger.info("average loss: %f"%loss_sum)
                 logger.info("training process: %d / %d"%(process, trainL))
                 loss_sum = 0
                 mark += report_every
                 store()
         correct = lstmcat.evaluate(test)
-        print("Epoch %d: %d / %d"%(e + 1, correct, len(test)))
+        logger.info("Epoch %d: %d / %d"%(e + 1, correct, len(test)))
 
 if __name__ == '__main__':
     pass

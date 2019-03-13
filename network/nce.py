@@ -48,7 +48,7 @@ class NCE(torch.nn.Module):
         """
         return (V, x), x = batch_size
         """
-        _map = torch.tensor([self.find(word) for idx, word in enumerate(words)])
+        _map = torch.tensor([self.find(word) for idx, word in enumerate(words)]).cuda()
         return _map
 
     def forward(self, targets, contexts, noise_count, re=10):
@@ -77,7 +77,7 @@ class NCE(torch.nn.Module):
         loss = (s).sigmoid().log().sum() / batch_size
 
         noises = self.get_noises(batch_size * noise_count)
-        nt = torch.cat((targets, ) * noise_count, dim=0)
+        nt = torch.cat((targets, ) * noise_count, dim=0).cuda()
         # noise target rep
         nq = self.embed.t()[nt].t()
 
@@ -147,7 +147,7 @@ def plot(nce, fp, plot_size=500):
 
     logger.info("start plot")
     labels = [nce.vocab[i] for i in range(plot_size)]
-    data = nce.embed.detach().t()[:plot_size, :]
+    data = nce.embed.detach().t().cpu()[:plot_size, :]
     tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=5000, method="exact")
     low_dim_embs = tsne.fit_transform(data)
     plot_with_labels(low_dim_embs, labels, fp)

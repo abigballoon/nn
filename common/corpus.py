@@ -81,14 +81,14 @@ def segments(data, filename, nthread=20):
     result = []
     for line, ori in zip(content.split('\n'), data):
         if not line: continue
-        result.append((line.split(' '), ori[1], ))
+        result.append((line.replace('\r', '').split(' '), ori[1], ))
     with open(pickle_fp, 'wb+') as f:
         pickle.dump(result, f)
 
 def getTaptapData(fp, labeled=False):
     with codecs.open(fp, encoding='utf8') as f:
         content = f.read()
-    lines = content.split('\n')
+    lines = content.replace('\r\n', '\n').split('\n')
     result = []
     for data in lines:
         splited = data.replace('\\n', ' ').split('\t')
@@ -103,12 +103,13 @@ def getTaptapData(fp, labeled=False):
             result.append(line)
     return result
 
-def splitTrainTest(XY):
+def splitTrainTest(XY, pad=True):
     L = len(XY)
     ratio = 0.8
     split = int(ratio * L)
     train, test = XY[: split], XY[split: ]
-    train = padData(train)
+    if pad:
+        train = padData(train)
     return train, test
 
 def padData(data):
